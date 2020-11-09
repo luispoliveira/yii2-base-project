@@ -1,0 +1,154 @@
+- name: Deploy Base Project
+  hosts: all
+  become: true
+  vars:
+    project_folder: /vagrant/base-project
+    admin_user: admin
+    admin_password: w3see3d
+    admin_email: admin@admin.com
+    database: test
+    db_user: vagrant
+    db_password: vagrant
+    machine_ip: 192.168.2.101
+
+  tasks:
+    - name: Update System
+      apt:
+        update_cache: yes
+
+    - name: Install Git
+      apt:
+        name: git
+
+    - name: install unzip
+      apt:
+        name: unzip
+
+    - name: install nginx
+      apt:
+        name: nginx
+
+    - name: copy nginx config
+      copy:
+        src: /vagrant/provisioning/nginx/001-main
+        dest: /etc/nginx/sites-available/001-main
+
+    - name: disable defualt site
+      file:
+        dest: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: enable backend site
+      file:
+        src: /etc/nginx/sites-available/001-main
+        dest: /etc/nginx/sites-enabled/001-main
+        state: link
+
+    - name: update php repository
+      apt_repository:
+        repo: 'ppa:ondrej/php'
+
+    - name: install php and its dependencies
+      apt:
+        name:
+          - php
+          - php-pgsql
+          - php-mysql
+          - php-mcrypt
+          - php-curl
+          - php-intl
+          - php-mbstring
+          - php-xml
+          - php-zip
+          - php-bcmath
+          - php-gd
+          - php-fpm
+        state: present
+
+    - name: download composer
+      get_url:
+        url: https://getcomposer.org/download/2.0.6/composer.phar
+        dest: /usr/local/bin/composer
+
+    - name: make composer executable
+      file:
+        path: /usr/local/bin/composer
+        mode: 0755
+        state: touch
+
+    - name: install project dependencies
+      composer:
+        command: install
+        no_dev: no
+        working_dir: "{{ project_folder}}"
+      become_user: vagrant
+
+    - name: add postgres repository key
+      apt_key:
+        url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        state: present
+
+    - name: add postgres 12 repository
+      apt_repository:
+        repo: deb https://apt.postgresql.org/pub/repos/apt /xenial-pgdg main
+        state: present
+
+    - name: install postgres 12
+      apt:
+        name: postgresql-12
+        state: present
+
+    - name: install psycopg2
+      apt:
+        name: python-psycopg2
+        state: present
+
+    - name: add user {{ db_user }} to postgres
+      postgresql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        role_attr_flags: CREATEDB,SUPERUSER
+      become_user: postgres
+
+    - name: create database {{ database }}
+      postgresql_db:
+        name: "{{ database }}"
+      become_user: postgres
+
+    - name: set postgres to listen on all ports
+      replace:
+        dest: /etc/postgresql/12/main/postgresql.conf
+        regexp: "#listen_addresses = 'localhost'"
+        replace: "listen_addresses = '*'"
+        backup: yes
+
+    - name: set postgres to listen everyone
+      lineinfile:
+        path: /etc/postgresql/12/main/pg_hba.conf
+        line: "host    all    all  0.0.0.0/0   md5"
+        state: present
+        backup: yes
+
+    - name: install phppgadmin
+      unarchive:
+        src: https://github.com/phppgadmin/phppgadmin/archive/REL_7-13-0.zip
+        dest: /usr/share
+        remote_src: yes
+      tags: phppgadmin
+
+    - name: change folder name phppgadmin
+      command: mv /usr/share/phppgadmin-REL_7-13-0 /usr/share/phppgadmin
+      tags: phppgadmin
+      ignore_errors: yes
+
+    - name: restart nginx
+      service:
+        name: nginx
+        state: restarted
+      ignore_errors: yes
+
+    - name: restart php-fpm
+      service:
+        name: php7.4-fpm
+        state: restarted
+      ignore_errors: yes
